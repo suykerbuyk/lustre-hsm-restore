@@ -1,3 +1,42 @@
+/*
+ * GPL HEADER START
+ *
+ * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 only,
+ * as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful, but
+ * WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * General Public License version 2 for more details (a copy is included
+ * in the LICENSE file that accompanied this code).
+ *
+ * You should have received a copy of the GNU General Public License
+ * version 2 along with this program; If not, see
+ * http://www.gnu.org/licenses/gpl-2.0.html
+ *
+ * GPL HEADER END
+ */
+/*
+ * =====================================================================================
+ *
+ *       Filename:  lhsm-restore.c
+ *
+ *    Description:  implements small utility to restore released lustre files.
+ *
+ *        Version:  1.0
+ *        Created:  10/30/2017 04:30:39 PM
+ *       Revision:  none
+ *       Compiler:  gcc
+ *
+ *         Author:  John Suykerbuyk
+ *   Organization:  Seagate PLC
+ *
+ * =====================================================================================
+ */
+
 #define _GNU_SOURCE 1
 #define __SIGNED__
 
@@ -13,7 +52,17 @@
 #include <errno.h>
 #include <linux/limits.h>
 #include <pthread.h>
+
+
 //#include <lustre/lustreapi.h>
+#include <linux/types.h>
+#include "lhsm-restore-stub.h"
+
+int llapi_hsm_state_get(const char *path, struct hsm_user_state *hus) {
+	hus->hus_in_progress_state = HS_RELEASED;
+	return 0;
+}
+
 
 /* time spec for polling set to 1/10th of one second */
 const struct timespec poll_time = {0,100000000L};
@@ -70,34 +119,29 @@ int restore_threads_init(int threads) {
 	return(0);
 }
 void restore_threads_halt(void) {
-	int rc;
 	int idx = 0;
 	fprintf(stderr, "Shutting down worker threads\n");
 	while (idx < thread_count) {
 		hsm_worker_threads[idx].ctx.shutdown_flag = 1;
-		ptread_cancel(hsm_worker_threads[idx].tcb);
+		nanosleep(&poll_time, NULL);
+		pthread_cancel(hsm_worker_threads[idx].tcb);
 	}
 	idx = 0;
 	while (idx < thread_count) {
 		hsm_worker_threads[idx].ctx.shutdown_flag = 1;
 		nanosleep(&poll_time, NULL);
-		ptread_cancel(hsm_worker_threads[idx].tcb);
+		pthread_cancel(hsm_worker_threads[idx].tcb);
 		idx++;
 	}
 	idx = 0;
 	while (idx < thread_count) {
-		if (hsm_worker_threads[idx].ctx.tstate != ctx_dead) {
-			printf(stderr, "Waiting for thread %d on path %s", idx, \
-				hsm_worker_threads[idx].ctx.path);
-			continue;
-		}
+		fprintf(stderr, "Joining thread %d\n", idx);
+		pthread_join(hsm_worker_threads[idx].tcb,NULL);
 		idx++;
 	}
 }
 struct ctx_hsm_restore_thread* restore_threads_find_idle(struct ctx_hsm_restore_thread** previous) {
 	return(NULL);
-}
-struct ctx_hsm_restore_thread* restore_threads_shutdown(struct ctx_hsm_restore_thread** previous) {
 }
 /* Worker thread function to restore a file */
 void* run_restore_ctx(void* context) {
@@ -113,7 +157,10 @@ void* run_restore_ctx(void* context) {
 			rc = nanosleep(&poll_time, NULL);
 			if (rc != 0) {
 				/* We recieved a interrupt */
-				pctx->shutdown_flag = 1;
+				int idx=0;
+				while (idx < thread_count) {
+					hsm_worker_threads[idx].ctx.shutdown_flag = 1;
+				}
 				break;
 			}
 		}
@@ -137,6 +184,7 @@ void* run_restore_ctx(void* context) {
 	}
 	pctx->tstate = ctx_dead;
 	pthread_exit(context);
+	return(NULL);
 }
 
 void hsm_walk_dir(const char *name)
@@ -178,7 +226,7 @@ void hsm_walk_dir(const char *name)
 				if (fd == 0) {
 					fprintf(stderr,"FailOpen: %d %s\n", errno, path);
 				} else {
-					//printf("Recover: %s\n", path);
+					printf("Recover: %s\n", path);
 					rc = read(fd, &filebuff, sizeof(filebuff));
 					if (rc < 0) { 
 						fprintf(stderr,"Lost: %d %s\n", errno, path); 
