@@ -59,7 +59,7 @@
 #include "lhsm-restore-stub.h"
 
 int llapi_hsm_state_get(const char *path, struct hsm_user_state *hus) {
-	hus->hus_in_progress_state = HS_RELEASED;
+	hus->hus_states  = HS_RELEASED;
 	return 0;
 }
 
@@ -69,7 +69,7 @@ const struct timespec poll_time = {0,100000000L};
 /* sum tally of all files */
 unsigned long long file_size_tally = 0;
 /* Number of worker threads to spawn */
-static const int thread_count = 4;
+static const int thread_count = 16;
 static struct ctx_hsm_restore_thread *hsm_worker_threads;
 
 void* run_restore_ctx(void* context);
@@ -105,42 +105,69 @@ struct ctx_hsm_restore_thread {
 int restore_threads_init(int threads) {
 	int rc;
 	int idx = 0;
-	struct ctx_hsm_restore_thread* prthrd;
+	pthread_t* ptcb;
+	struct ctx_worker* pctx;
+	fprintf(stderr, "BEGIN: restor_threads_init\n");
 	hsm_worker_threads = calloc(thread_count , sizeof(struct ctx_hsm_restore_thread));
-	if (NULL == hsm_worker_threads)
+	if (NULL == hsm_worker_threads) {
+		fprintf(stderr, "ERROR: Could not allocate memory for thread contexts\n");
 		return(ENOMEM);
+	}
 	while (idx < threads) {
-		prthrd=&(hsm_worker_threads[idx]);
-		if ((rc = pthread_create(&(prthrd->tcb), NULL, run_restore_ctx, &prthrd->ctx )) != 0) {
+		ptcb=&(hsm_worker_threads[idx].tcb);
+		pctx=&(hsm_worker_threads[idx].ctx);
+		if ((rc = pthread_create(ptcb, NULL, run_restore_ctx, pctx )) != 0) {
+			fprintf(stderr, "ERROR: %d launching thread %d\n", rc, idx);
 			return(rc);
 		}
+		fprintf(stderr, "OK: Launched thread %d \n", idx);
 		idx++;
 	}
+	fprintf(stderr, "OK: Launched %d threads \n", idx);
 	return(0);
 }
 void restore_threads_halt(void) {
 	int idx = 0;
-	fprintf(stderr, "Shutting down worker threads\n");
+	fprintf(stderr, "ENTER: restore_threads_halt\n");
+	/* tell the threads it's time to quit */
 	while (idx < thread_count) {
 		hsm_worker_threads[idx].ctx.shutdown_flag = 1;
 		nanosleep(&poll_time, NULL);
-		pthread_cancel(hsm_worker_threads[idx].tcb);
-	}
-	idx = 0;
-	while (idx < thread_count) {
-		hsm_worker_threads[idx].ctx.shutdown_flag = 1;
-		nanosleep(&poll_time, NULL);
-		pthread_cancel(hsm_worker_threads[idx].tcb);
 		idx++;
 	}
 	idx = 0;
+	/* send the cancel signal, will be caught by nanosleep */
 	while (idx < thread_count) {
-		fprintf(stderr, "Joining thread %d\n", idx);
+		pthread_cancel(hsm_worker_threads[idx].tcb);
+		nanosleep(&poll_time, NULL);
+		idx++;
+	}
+	idx = 0;
+	/* Join each thread as they shutdown */
+	while (idx < thread_count) {
+		fprintf(stderr, "OK: Joining thread %d\n", idx);
 		pthread_join(hsm_worker_threads[idx].tcb,NULL);
 		idx++;
 	}
+	fprintf(stderr, "EXIT: restore_threads_halt\n");
 }
-struct ctx_hsm_restore_thread* restore_threads_find_idle(struct ctx_hsm_restore_thread** previous) {
+struct ctx_hsm_restore_thread* restore_threads_find_idle(void) {
+	static int idx=0;
+	fprintf(stderr,"ENTER: restore_threads_find_idle\n");
+	struct ctx_worker* pctx = &hsm_worker_threads[idx].ctx;
+	while(1) {
+		if (pctx->tstate == ctx_idle) {
+			fprintf(stderr, "EXIT: returning idle thread %d\n", idx);
+			return (&hsm_worker_threads[idx]);
+		}
+		if (idx == (thread_count-1)) {
+			nanosleep(&poll_time, NULL);
+			//fprintf(stderr, "No idle threads found.  Still searching.\n");
+		}
+		idx++;
+		if (idx >= thread_count)
+			idx=0;
+	}
 	return(NULL);
 }
 /* Worker thread function to restore a file */
@@ -150,22 +177,29 @@ void* run_restore_ctx(void* context) {
 	char  iobuff[4096];
 	int   fd;
 	pctx->tstate = ctx_idle;
+	struct md5result md5str;
 	pthread_setcancelstate(PTHREAD_CANCEL_ENABLE, NULL);
+	fprintf(stderr, "ENTER: run_restore_ctx\n");
 	while (0 == pctx->shutdown_flag) {
 		pctx->fstate=ctx_unknown;
 		while(pctx->tstate == ctx_idle) {
 			rc = nanosleep(&poll_time, NULL);
 			if (rc != 0) {
-				/* We recieved a interrupt */
+				/* We recieved a interrupt signal everyone to shutdown */
 				int idx=0;
+				fprintf(stderr, "run_restore_ctx: Cancel signaled!\n");
 				while (idx < thread_count) {
 					hsm_worker_threads[idx].ctx.shutdown_flag = 1;
+					idx++;
 				}
 				break;
 			}
 		}
-		if (0 != pctx->shutdown_flag)
+		fprintf(stderr, "run_restore_ctx has %s\n", pctx->path);
+		if (0 != pctx->shutdown_flag){
+			fprintf(stderr, "run_restore_ctx SHUTDOWN FLAG IS SET!");
 			break;
+		}
 		fd = open(pctx->path, O_RDONLY);
 		if (fd == 0) {
 			pctx->error = errno;
@@ -177,12 +211,16 @@ void* run_restore_ctx(void* context) {
 				pctx->fstate = ctx_lost;
 			} else {
 				pctx->fstate = ctx_recovered;
+				for(int i =0; i < 500000; i++)
+					str2md5(iobuff, sizeof(iobuff), &md5str);
 			}
 		close(fd);
+		fprintf(stdout, "%s %s\n", md5str.str, pctx->path);
 		}
 		pctx->tstate = ctx_idle;
 	}
 	pctx->tstate = ctx_dead;
+	fprintf(stderr, "EXIT: run_restore_ctx\n");
 	pthread_exit(context);
 	return(NULL);
 }
@@ -199,7 +237,6 @@ void hsm_walk_dir(const char *name)
 
 	while ((entry = readdir(dir)) != NULL) {
 		char path[PATH_MAX];
-		char filebuff[4096];
 		struct hsm_user_state hus;
 		int rc;
 		int released;
@@ -222,21 +259,13 @@ void hsm_walk_dir(const char *name)
 			}
 			released = hus.hus_states & HS_RELEASED;
 			if (released) {
-				int fd = open(path, O_RDONLY);
-				if (fd == 0) {
-					fprintf(stderr,"FailOpen: %d %s\n", errno, path);
-				} else {
-					printf("Recover: %s\n", path);
-					rc = read(fd, &filebuff, sizeof(filebuff));
-					if (rc < 0) { 
-						fprintf(stderr,"Lost: %d %s\n", errno, path); 
-					} else {
-						fprintf(stdout,"Recovered: %s \n", path);
-					}
-				close(fd);
+				fprintf(stderr, "hsmwalk found released: %s\n", path);
+				struct ctx_hsm_restore_thread* pthrd = restore_threads_find_idle();
+				if (NULL == pthrd) {
+					fprintf(stderr, "ERROR: No idle threads found\n");
 				}
-			} else {
-				fprintf(stdout, "Found: %s\n", path);
+				strncpy(pthrd->ctx.path, path, sizeof(pthrd->ctx.path));
+				pthrd->ctx.tstate = ctx_work;
 			}
 		}
 	}
@@ -252,7 +281,9 @@ int main(int argc, char** argv) {
 			plen--;
 			path[plen] = 0;
 		}
+		restore_threads_init(thread_count);
 		hsm_walk_dir(path);
+		restore_threads_halt();
 	}
 	else
 	   hsm_walk_dir(".");
