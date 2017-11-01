@@ -167,6 +167,7 @@ struct ctx_hsm_restore_thread* restore_threads_find_idle(void) {
 		idx++;
 		if (idx >= thread_count)
 			idx=0;
+		pctx = &hsm_worker_threads[idx].ctx;
 	}
 	return(NULL);
 }
@@ -185,9 +186,8 @@ void* run_restore_ctx(void* context) {
 		while(pctx->tstate == ctx_idle) {
 			rc = nanosleep(&poll_time, NULL);
 			if (rc != 0) {
-				/* We recieved a interrupt signal everyone to shutdown */
-				int idx=0;
 				fprintf(stderr, "run_restore_ctx: Cancel signaled!\n");
+				int idx=0;
 				while (idx < thread_count) {
 					hsm_worker_threads[idx].ctx.shutdown_flag = 1;
 					idx++;
