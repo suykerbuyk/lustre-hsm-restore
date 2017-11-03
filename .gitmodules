@@ -1,0 +1,4 @@
+[submodule "zlog"]
+	path = zlog
+	url = https://github.com/suykerbuyk/zlog.git
+	branch = master
