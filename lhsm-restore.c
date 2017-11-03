@@ -59,7 +59,10 @@
 #include "lhsm-restore-stub.h"
 
 int llapi_hsm_state_get(const char *path, struct hsm_user_state *hus) {
-	hus->hus_states  = HS_RELEASED;
+	if (rand() % 16 > 8)
+		hus->hus_states  = HS_RELEASED | HS_ARCHIVED;
+	else
+		hus->hus_states  = HS_EXISTS | HS_ARCHIVED;
 	return 0;
 }
 
@@ -210,9 +213,10 @@ void* run_restore_ctx(void* context) {
 				pctx->error = errno;
 				pctx->fstate = ctx_lost;
 			} else {
-				pctx->fstate = ctx_recovered;
-				for(int i =0; i < 500000; i++)
+				for(int i =0; i < 50000; i++) {
 					str2md5(iobuff, sizeof(iobuff), &md5str);
+				}
+				pctx->fstate = ctx_recovered;
 			}
 		close(fd);
 		fprintf(stdout, "%s %s\n", md5str.str, pctx->path);
@@ -263,9 +267,10 @@ void hsm_walk_dir(const char *name)
 				struct ctx_hsm_restore_thread* pthrd = restore_threads_find_idle();
 				if (NULL == pthrd) {
 					fprintf(stderr, "ERROR: No idle threads found\n");
+				} else {
+					strncpy(pthrd->ctx.path, path, sizeof(pthrd->ctx.path));
+					pthrd->ctx.tstate = ctx_work;
 				}
-				strncpy(pthrd->ctx.path, path, sizeof(pthrd->ctx.path));
-				pthrd->ctx.tstate = ctx_work;
 			}
 		}
 	}
@@ -273,6 +278,7 @@ void hsm_walk_dir(const char *name)
 }
 
 int main(int argc, char** argv) {
+	srand(time(NULL));
 	if (argc >1) {
 		char* path=argv[1];
 		size_t plen=strlen(path);
