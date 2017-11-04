@@ -40,6 +40,8 @@
 #define _GNU_SOURCE 1
 #define __SIGNED__
 
+
+
 #include <time.h>
 #include <sys/types.h>
 #include <unistd.h>
@@ -52,12 +54,15 @@
 #include <errno.h>
 #include <linux/limits.h>
 #include <pthread.h>
-
-
-//#include <lustre/lustreapi.h>
+#include "zlog/src/zlog.h"
 #include <linux/types.h>
+
+#ifdef REAL_LUSTRE
+#include <lustre/lustreapi.h>
+#else
 #include "lhsm-restore-stub.h"
 
+/* stub function to fake a real call to llapi api's */
 int llapi_hsm_state_get(const char *path, struct hsm_user_state *hus) {
 	if (rand() % 16 > 8)
 		hus->hus_states  = HS_RELEASED | HS_ARCHIVED;
@@ -65,18 +70,30 @@ int llapi_hsm_state_get(const char *path, struct hsm_user_state *hus) {
 		hus->hus_states  = HS_EXISTS | HS_ARCHIVED;
 	return 0;
 }
+#endif
 
 
 /* time spec for polling set to 1/10th of one second */
 const struct timespec poll_time = {0,100000000L};
+
 /* sum tally of all files */
 unsigned long long file_size_tally = 0;
+
 /* Number of worker threads to spawn */
 static const int thread_count = 16;
+
+/* List of worker thread contextx */
 static struct ctx_hsm_restore_thread *hsm_worker_threads;
 
+/* function run by a worker thread */
 void* run_restore_ctx(void* context);
 
+/* zlog category context.  We only use one for this */
+static zlog_category_t* zctx = NULL;
+/* Category of logging definitions */
+const char* const zlog_category = "lhsm_log";
+/* The config file that controls logging  */
+const char* const zlog_conf_file = "lhsm-restore.conf";
 /* state of the running context */
 enum ctx_tstate {
 	ctx_dead   = -1, /*  Can only be set by worker thread */
@@ -111,7 +128,8 @@ int restore_threads_init(int threads) {
 	pthread_t* ptcb;
 	struct ctx_worker* pctx;
 	fprintf(stderr, "BEGIN: restor_threads_init\n");
-	hsm_worker_threads = calloc(thread_count , sizeof(struct ctx_hsm_restore_thread));
+	hsm_worker_threads =\
+		calloc(thread_count , sizeof(struct ctx_hsm_restore_thread));
 	if (NULL == hsm_worker_threads) {
 		fprintf(stderr, "ERROR: Could not allocate memory for thread contexts\n");
 		return(ENOMEM);
@@ -237,6 +255,7 @@ void hsm_walk_dir(const char *name)
 		return;
 	} else {
 		// printf("working on %s\n", name);
+		zlog_info(zctx, "working on %s\n", name);
 	}
 
 	while ((entry = readdir(dir)) != NULL) {
@@ -250,13 +269,15 @@ void hsm_walk_dir(const char *name)
 		else
 			snprintf(path, sizeof(path), "%s/%s", name, entry->d_name);
 		if (entry->d_type == DT_DIR) {
-			if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0)
+			if (strcmp(entry->d_name, ".") == 0\
+					|| strcmp(entry->d_name, "..") == 0)
 				continue;
 			hsm_walk_dir(path);
 		} else if (entry->d_type == DT_REG) {
 			rc = llapi_hsm_state_get(path, &hus);
 			if (rc != 0) {
-				printf("Error: get hsm state rc %d errno %d for %s\n", rc, errno, path);
+				printf("Error: get hsm state rc %d errno %d for %s\n",\
+						rc, errno, path);
 				break;
 			} else {
 				//printf("Got hsm state for %s\n", path);
@@ -264,7 +285,8 @@ void hsm_walk_dir(const char *name)
 			released = hus.hus_states & HS_RELEASED;
 			if (released) {
 				fprintf(stderr, "hsmwalk found released: %s\n", path);
-				struct ctx_hsm_restore_thread* pthrd = restore_threads_find_idle();
+				struct ctx_hsm_restore_thread* \
+					pthrd = restore_threads_find_idle();
 				if (NULL == pthrd) {
 					fprintf(stderr, "ERROR: No idle threads found\n");
 				} else {
@@ -278,7 +300,20 @@ void hsm_walk_dir(const char *name)
 }
 
 int main(int argc, char** argv) {
+	int rc;
 	srand(time(NULL));
+	rc = zlog_init(zlog_conf_file);
+	if (rc) {
+		fprintf(stderr, "zlog init failed with errno %d while opening %s\n",\
+				rc, zlog_conf_file);
+		return -1;
+	}
+	zctx = zlog_get_category(zlog_category);
+	if (NULL == zctx) {
+		fprintf(stderr, "zlog failed to get category %s from %s\n",\
+				zlog_category, zlog_conf_file);
+	}
+	restore_threads_init(thread_count);
 	if (argc >1) {
 		char* path=argv[1];
 		size_t plen=strlen(path);
@@ -287,12 +322,12 @@ int main(int argc, char** argv) {
 			plen--;
 			path[plen] = 0;
 		}
-		restore_threads_init(thread_count);
 		hsm_walk_dir(path);
-		restore_threads_halt();
-	}
-	else
+	} else {
 	   hsm_walk_dir(".");
+	}
+	restore_threads_halt();
+	zlog_fini();
 	return 0;
 }
-// vim: tabstop=4 shiftwidth=4 softtabstop=4 smarttab
+// vim: tabstop=4 shiftwidth=4 softtabstop=4 smarttab setcolorcolumn=81
