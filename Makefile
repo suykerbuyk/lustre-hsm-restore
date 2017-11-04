@@ -29,19 +29,21 @@ CFLAGS   = -std=c99 -Wall
 LDFLAGS +=-L$(LIB_SRCH_PATH)
 LIBS    := -lpthread -lcrypto $(DIR_ZLOG_SRC)/libzlog.a
 
+.DEFAULT_GOAL := $(TARGET)
 
-.PHONY: all clean $(SUBDIRS)
+$(TARGET): subdirs $(SOURCES) $(HEADERS)
+	$(CC) $(CFLAGS) $(SOURCES) $(LDFLAGS) $(LIBS) -o $@
+
 
 all: $(TARGET)
 
 HEADERS=$(wildcard *.h)
 SOURCES =$(wildcard *.c)
 
+.PHONY: clean $(SUBDIRS)
+
 #%o: %c $(HEADERS) Makefile
 #	$(CC) $(CFLAGS) -c $< -o $@
-
-$(TARGET): subdirs $(SOURCES) $(HEADERS)
-	$(CC) $(CFLAGS) $(SOURCES) $(LDFLAGS) $(LIBS) -o $@
 
 clean:
 	rm -rf *.o
