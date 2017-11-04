@@ -127,29 +127,29 @@ int restore_threads_init(int threads) {
 	int idx = 0;
 	pthread_t* ptcb;
 	struct ctx_worker* pctx;
-	fprintf(stderr, "BEGIN: restor_threads_init\n");
+	zlog_info(zctx, "BEGIN: restore_threads_init");
 	hsm_worker_threads =\
 		calloc(thread_count , sizeof(struct ctx_hsm_restore_thread));
 	if (NULL == hsm_worker_threads) {
-		fprintf(stderr, "ERROR: Could not allocate memory for thread contexts\n");
+		zlog_error(zctx, "Could not allocate memory for thread contexts.");
 		return(ENOMEM);
 	}
 	while (idx < threads) {
 		ptcb=&(hsm_worker_threads[idx].tcb);
 		pctx=&(hsm_worker_threads[idx].ctx);
 		if ((rc = pthread_create(ptcb, NULL, run_restore_ctx, pctx )) != 0) {
-			fprintf(stderr, "ERROR: %d launching thread %d\n", rc, idx);
+			zlog_error(zctx, "error %d launching thread %d", rc, idx);
 			return(rc);
 		}
-		fprintf(stderr, "OK: Launched thread %d \n", idx);
+		zlog_info(zctx, "Launched thread %d", idx);
 		idx++;
 	}
-	fprintf(stderr, "OK: Launched %d threads \n", idx);
+	zlog_info(zctx, "EXIT: restore_theads_init Launched %d threads", idx);
 	return(0);
 }
 void restore_threads_halt(void) {
 	int idx = 0;
-	fprintf(stderr, "ENTER: restore_threads_halt\n");
+	zlog_info(zctx, "ENTER: restore_threads_halt");
 	/* tell the threads it's time to quit */
 	while (idx < thread_count) {
 		hsm_worker_threads[idx].ctx.shutdown_flag = 1;
@@ -166,30 +166,31 @@ void restore_threads_halt(void) {
 	idx = 0;
 	/* Join each thread as they shutdown */
 	while (idx < thread_count) {
-		fprintf(stderr, "OK: Joining thread %d\n", idx);
+		zlog_info(zctx, "Joining thread %d", idx);
 		pthread_join(hsm_worker_threads[idx].tcb,NULL);
 		idx++;
 	}
-	fprintf(stderr, "EXIT: restore_threads_halt\n");
+	zlog_info(zctx, "EXIT: restore_threads_halt");
 }
 struct ctx_hsm_restore_thread* restore_threads_find_idle(void) {
 	static int idx=0;
-	fprintf(stderr,"ENTER: restore_threads_find_idle\n");
+	zlog_info(zctx,"ENTER: restore_threads_find_idle");
 	struct ctx_worker* pctx = &hsm_worker_threads[idx].ctx;
 	while(1) {
 		if (pctx->tstate == ctx_idle) {
-			fprintf(stderr, "EXIT: returning idle thread %d\n", idx);
+			zlog_info(zctx, "EXIT: returning idle thread %d", idx);
 			return (&hsm_worker_threads[idx]);
 		}
 		if (idx == (thread_count-1)) {
 			nanosleep(&poll_time, NULL);
-			//fprintf(stderr, "No idle threads found.  Still searching.\n");
+			zlog_debug(zctx, "No idle threads found.  Still searching.");
 		}
 		idx++;
 		if (idx >= thread_count)
 			idx=0;
 		pctx = &hsm_worker_threads[idx].ctx;
 	}
+	zlog_error(zctx, "EXIT: FAILED to find idle thread");
 	return(NULL);
 }
 /* Worker thread function to restore a file */
@@ -201,13 +202,13 @@ void* run_restore_ctx(void* context) {
 	pctx->tstate = ctx_idle;
 	struct md5result md5str;
 	pthread_setcancelstate(PTHREAD_CANCEL_ENABLE, NULL);
-	fprintf(stderr, "ENTER: run_restore_ctx\n");
+	zlog_info(zctx, "ENTER: run_restore_ctx");
 	while (0 == pctx->shutdown_flag) {
 		pctx->fstate=ctx_unknown;
 		while(pctx->tstate == ctx_idle) {
 			rc = nanosleep(&poll_time, NULL);
 			if (rc != 0) {
-				fprintf(stderr, "run_restore_ctx: Cancel signaled!\n");
+				zlog_warn(zctx, "run_restore_ctx: Cancel signaled!");
 				int idx=0;
 				while (idx < thread_count) {
 					hsm_worker_threads[idx].ctx.shutdown_flag = 1;
@@ -216,9 +217,9 @@ void* run_restore_ctx(void* context) {
 				break;
 			}
 		}
-		fprintf(stderr, "run_restore_ctx has %s\n", pctx->path);
+		zlog_info(zctx, "run_restore_ctx has path %s", pctx->path);
 		if (0 != pctx->shutdown_flag){
-			fprintf(stderr, "run_restore_ctx SHUTDOWN FLAG IS SET!");
+			zlog_warn(zctx, "run_restore_ctx SHUTDOWN FLAG IS SET!");
 			break;
 		}
 		fd = open(pctx->path, O_RDONLY);
@@ -242,7 +243,7 @@ void* run_restore_ctx(void* context) {
 		pctx->tstate = ctx_idle;
 	}
 	pctx->tstate = ctx_dead;
-	fprintf(stderr, "EXIT: run_restore_ctx\n");
+	zlog_info(zctx, "EXIT: run_restore_ctx");
 	pthread_exit(context);
 	return(NULL);
 }
@@ -255,7 +256,7 @@ void hsm_walk_dir(const char *name)
 		return;
 	} else {
 		// printf("working on %s\n", name);
-		zlog_info(zctx, "working on %s\n", name);
+		zlog_info(zctx, "working on %s", name);
 	}
 
 	while ((entry = readdir(dir)) != NULL) {
@@ -284,11 +285,11 @@ void hsm_walk_dir(const char *name)
 			}
 			released = hus.hus_states & HS_RELEASED;
 			if (released) {
-				fprintf(stderr, "hsmwalk found released: %s\n", path);
+				zlog_info(zctx, "hsmwalk found released: %s", path);
 				struct ctx_hsm_restore_thread* \
 					pthrd = restore_threads_find_idle();
 				if (NULL == pthrd) {
-					fprintf(stderr, "ERROR: No idle threads found\n");
+					zlog_error(zctx, "ERROR: No idle threads found");
 				} else {
 					strncpy(pthrd->ctx.path, path, sizeof(pthrd->ctx.path));
 					pthrd->ctx.tstate = ctx_work;
@@ -313,6 +314,7 @@ int main(int argc, char** argv) {
 		fprintf(stderr, "zlog failed to get category %s from %s\n",\
 				zlog_category, zlog_conf_file);
 	}
+	zlog_info(zctx, "BEGIN: main");
 	restore_threads_init(thread_count);
 	if (argc >1) {
 		char* path=argv[1];
@@ -328,6 +330,7 @@ int main(int argc, char** argv) {
 	}
 	restore_threads_halt();
 	zlog_fini();
+	zlog_info(zctx, "EXIT: main");
 	return 0;
 }
-// vim: tabstop=4 shiftwidth=4 softtabstop=4 smarttab setcolorcolumn=81
+// vim: tabstop=4 shiftwidth=4 softtabstop=4 smarttab colorcolumn=81
