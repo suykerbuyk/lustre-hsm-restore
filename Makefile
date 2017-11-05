@@ -40,7 +40,14 @@ all: $(TARGET)
 HEADERS=$(wildcard *.h)
 SOURCES =$(wildcard *.c)
 
-.PHONY: clean $(SUBDIRS)
+
+cscope.files: $(HEADERS) $(SOURCES)
+	echo $(HEADERS) $(SOURCES) | sort  >cscope.files
+
+cscope.out: cscope.files
+	cscope -b -q -i cscope.files
+
+cscope: cscope.out
 
 #%o: %c $(HEADERS) Makefile
 #	$(CC) $(CFLAGS) -c $< -o $@
@@ -48,8 +55,10 @@ SOURCES =$(wildcard *.c)
 clean:
 	rm -rf *.o
 	rm -rf $(TARGET)
+	rm -rf cscope.*
 	cd zlog/src && make clean
 
 
+.PHONY: all clean cscope $(SUBDIRS)
 # lhsm-restore: lhsm-restore.c lhsm-restore-stub.h
 # 	gcc -g -o lhsm-restore -std=c99 -pthread -lcrypto -Wall lhsm-restore.c
