@@ -88,18 +88,22 @@ static struct ctx_hsm_restore_thread *hsm_worker_threads;
 /* function run by a worker thread */
 void* run_restore_ctx(void* context);
 
-/* zlog category context.  We only use one for this */
-static zlog_category_t* zctx = NULL;
-/* Category of logging definitions */
-const char* const zlog_category = "lhsm_log";
-/* The config file that controls logging  */
-const char* const zlog_conf_file = "lhsm-restore.conf";
 /* state of the running context */
 enum ctx_tstate {
 	ctx_dead   = -1, /*  Can only be set by worker thread */
 	ctx_idle   =  0, /*  Can only be set by worker thread */
 	ctx_work   =  1  /*  Can only be set by parent thread */
 };
+
+/* global shutdown flag */
+static int volatile shutdown_flag = 0;
+
+/* zlog category context.  We only use one for this */
+static zlog_category_t* zctx = NULL;
+/* Category of logging definitions */
+const char* const zlog_category = "lhsm_log";
+/* The config file that controls logging  */
+const char* const zlog_conf_file = "lhsm-restore.conf";
 
 /* state context's file */
 enum ctx_fstate {
@@ -115,7 +119,6 @@ struct ctx_worker {
 	enum ctx_tstate tstate; /* running state of thread context, set by worker */
 	enum ctx_fstate fstate; /* state of recovered file, set by worker         */
 	int  error;             /* errno of last failed call                      */
-	int  shutdown_flag;     /* Set only by parent OR if interrupted           */
 	char path[PATH_MAX];    /* File path to restore                           */
 };
 struct ctx_hsm_restore_thread {
@@ -151,12 +154,8 @@ void restore_threads_halt(void) {
 	int idx = 0;
 	zlog_info(zctx, "ENTER: restore_threads_halt");
 	/* tell the threads it's time to quit */
-	while (idx < thread_count) {
-		hsm_worker_threads[idx].ctx.shutdown_flag = 1;
-		nanosleep(&poll_time, NULL);
-		idx++;
-	}
-	idx = 0;
+	shutdown_flag = 1;
+	nanosleep(&poll_time, NULL);
 	/* send the cancel signal, will be caught by nanosleep */
 	while (idx < thread_count) {
 		pthread_cancel(hsm_worker_threads[idx].tcb);
@@ -203,22 +202,18 @@ void* run_restore_ctx(void* context) {
 	struct md5result md5str;
 	pthread_setcancelstate(PTHREAD_CANCEL_ENABLE, NULL);
 	zlog_info(zctx, "ENTER: run_restore_ctx");
-	while (0 == pctx->shutdown_flag) {
+	while (!shutdown_flag) {
 		pctx->fstate=ctx_unknown;
 		while(pctx->tstate == ctx_idle) {
 			rc = nanosleep(&poll_time, NULL);
 			if (rc != 0) {
 				zlog_warn(zctx, "run_restore_ctx: Cancel signaled!");
-				int idx=0;
-				while (idx < thread_count) {
-					hsm_worker_threads[idx].ctx.shutdown_flag = 1;
-					idx++;
-				}
+				shutdown_flag = 1;
 				break;
 			}
 		}
 		zlog_info(zctx, "run_restore_ctx has path %s", pctx->path);
-		if (0 != pctx->shutdown_flag){
+		if (shutdown_flag) {
 			zlog_warn(zctx, "run_restore_ctx SHUTDOWN FLAG IS SET!");
 			break;
 		}
