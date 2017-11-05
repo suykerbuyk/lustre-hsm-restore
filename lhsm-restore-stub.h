@@ -1,33 +1,64 @@
 /*
- * =====================================================================================
+ * GPL HEADER START
+ *
+ * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 only,
+ * as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful, but
+ * WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * General Public License version 2 for more details (a copy is included
+ * in the LICENSE file that accompanied this code).
+ *
+ * You should have received a copy of the GNU General Public License
+ * version 2 along with this program; If not, see
+ * http://www.gnu.org/licenses/gpl-2.0.html
+ *
+ * GPL HEADER END
+ */
+/*
+ * =============================================================================
  *
  *       Filename:  lhsm-restore-stub.h
  *
- *    Description:  stubbed lustre functions for testing on non-lustre clients.
+ *    Description:  Defines stub functions to emulate lhsm-restore timing.
  *
  *        Version:  1.0
  *        Created:  10/30/2017 04:30:39 PM
  *       Revision:  none
  *       Compiler:  gcc
  *
- *         Author:  YOUR NAME (), 
- *   Organization:  
+ *         Author:  John Suykerbuyk
+ *   Organization:  Seagate PLC
  *
- * =====================================================================================
+ * ============================================================================
  */
+#ifndef LHSM_RESTORE_STUB_H
+#define LHSM_RESTORE_STUB_H
+#include <stdlib.h>
+#include <openssl/md5.h>
+#include <sys/types.h>
+#include <linux/types.h>
+
+struct md5result {
+	char str[34];
+};
 
 /** HSM per-file state
  * See HSM_FLAGS below.
  */
 enum hsm_states {
-	HS_NONE		= 0x00000000,
-	HS_EXISTS	= 0x00000001,
-	HS_DIRTY	= 0x00000002,
-	HS_RELEASED	= 0x00000004,
-	HS_ARCHIVED	= 0x00000008,
-	HS_NORELEASE	= 0x00000010,
-	HS_NOARCHIVE	= 0x00000020,
-	HS_LOST		= 0x00000040,
+	HS_NONE      = 0x00000000,
+	HS_EXISTS    = 0x00000001,
+	HS_DIRTY     = 0x00000002,
+	HS_RELEASED  = 0x00000004,
+	HS_ARCHIVED  = 0x00000008,
+	HS_NORELEASE = 0x00000010,
+	HS_NOARCHIVE = 0x00000020,
+	HS_LOST      = 0x00000040,
 };
 
 struct hsm_extent {
@@ -50,36 +81,10 @@ struct hsm_user_state {
 	char			hus_extended_info[];
 };
 
+int llapi_hsm_state_get(const char *path, struct hsm_user_state *hus);
+void str2md5(const char *str, int length, struct md5result* pres);
 
-#include <openssl/md5.h>
-struct md5result {
-	char str[34];
-};
-
-void str2md5(const char *str, int length, struct md5result* pres) {
-	int n;
-	MD5_CTX c;
-	unsigned char digest[16];
-	char *out = pres->str;
-
-	MD5_Init(&c);
-
-	while (length > 0) {
-		if (length > 512) {
-			MD5_Update(&c, str, 512);
-		} else {
-			MD5_Update(&c, str, length);
-		}
-		length -= 512;
-		str += 512;
-		}
-
-	MD5_Final(digest, &c);
-
-	for (n = 0; n < 16; ++n) {
-		snprintf(&(out[n*2]), 16*2, "%02x", (unsigned int)digest[n]);
-	}
-}
+#endif // LHSM_RESTORE_STUB_H
 // vim: tabstop=4 shiftwidth=4 softtabstop=4 smarttab
 
 
