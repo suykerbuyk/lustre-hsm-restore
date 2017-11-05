@@ -25,7 +25,7 @@ $(SUBDIRS):
 	cd $@ && make
 
 
-CFLAGS   = -std=c99 -Wall
+CFLAGS   = -std=c99 -Wall -g
 LDFLAGS +=-L$(LIB_SRCH_PATH)
 LIBS    := -lpthread -lcrypto $(DIR_ZLOG_SRC)/libzlog.a
 
