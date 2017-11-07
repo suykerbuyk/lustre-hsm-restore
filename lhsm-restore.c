@@ -41,7 +41,7 @@
 #define __SIGNED__
 
 
-
+#include "lhsm-restore-test.h"
 #include "lhsm-threads.h"
 
 #ifdef REAL_LUSTRE
@@ -51,23 +51,77 @@
 
 #endif
 
+struct file_func_ctx {
+	char file_path[PATH_MAX];
+	char result[PATH_MAX *2];
+	int failed;
 
+};
+
+int restore_file(const char* const file_path) {
+	int fd;
+	int rc;
+	char iobuf[4096];
+	fd = open(file_path, O_RDONLY);
+	if (fd == 0) {
+		rc = errno;
+	} else {
+		rc = read(fd, &iobuf, sizeof(iobuf));
+		if (rc < 0) {
+			/* convert to positive errno value */
+			rc = -errno;
+		} else {
+			/* Positive value means successful bytes read */
+			rc = 0; 
+		}
+	}
+	close(fd);
+	return rc;
+}
+
+int validate_file(const char* const file_path) {
+	int rc;
+	rc = 0;
+	return rc;
+}
+
+struct file_func_ctx* file_functor(struct file_func_ctx* fctx) {
+	int rc;
+	struct hsm_user_state hus;
+	memset(fctx->result, 0, sizeof(fctx->result));
+	while(1) {
+		rc = llapi_hsm_state_get(fctx->file_path, &hus);
+		if (rc != 0) {
+			snprintf(fctx->result, sizeof(fctx->result),
+					"ERROR: LLAPI Fail %d for %s", rc, fctx->file_path);
+			fctx->failed = 1;
+			break;
+		}
+		if (hus.hus_states & HS_RELEASED) {
+			if ((rc = restore_file(fctx->file_path)) != 0) {
+				snprintf(fctx->result, sizeof(fctx->result),
+					"ERROR: Restore Fail %d for %s", rc, fctx->file_path);
+				fctx->failed = 1;
+				break;
+			}
+		}
+	}
+	return fctx;
+}
 
 void hsm_walk_dir(const char *name)
 {
 	DIR *dir;
 	struct dirent *entry;
+	int rc;
 	if (!(dir = opendir(name))) {
 		return;
 	} else {
-		// printf("working on %s\n", name);
 		zlog_info(zctx, "working on %s", name);
 	}
-
 	while ((entry = readdir(dir)) != NULL) {
 		char path[PATH_MAX];
 		struct hsm_user_state hus;
-		int rc;
 		int released;
 
 		if (*entry->d_name =='/') 
@@ -114,6 +168,12 @@ int main(int argc, char** argv) {
 				rc, zlog_conf_file);
 		return -1;
 	}
+	rc = run_self_test();
+	printf("run_self_test = %d\n", rc);
+	if (rc)
+		return rc;
+	if (!rc)
+		return rc;
 	zctx = zlog_get_category(zlog_category);
 	if (NULL == zctx) {
 		fprintf(stderr, "zlog failed to get category %s from %s\n",\
