@@ -44,6 +44,10 @@
 #include <pthread.h>
 #include "lhsm-threads.h"
 #include "lhsm-restore-stub.h"
+
+/* global shutdown flag */
+static int volatile shutdown_flag = 0;
+
 /* List of worker thread contextx */
 static struct ctx_hsm_restore_thread *hsm_worker_threads;
 const  struct timespec poll_time = {0,100000000L};
@@ -155,9 +159,9 @@ void* run_restore_ctx(void* context) {
 				pctx->error = errno;
 				pctx->fstate = ctx_lost;
 			} else {
-				for(int i =0; i < 50000; i++) {
+				//for(int i =0; i < 50000; i++) {
 					str2md5(iobuff, sizeof(iobuff), &md5str);
-				}
+				//}
 				pctx->fstate = ctx_recovered;
 			}
 		close(fd);
@@ -194,5 +198,9 @@ void str2md5(const char *str, int length, struct md5result* pres) {
 	for (n = 0; n < 16; ++n) {
 		snprintf(&(out[n*2]), 16*2, "%02x", (unsigned int)digest[n]);
 	}
+}
+
+void run_as_thread(file_functor_ptr function, void* functor_ctx) {
+	function(functor_ctx);
 }
 // vim: tabstop=4 shiftwidth=4 softtabstop=4 smarttab colorcolumn=81

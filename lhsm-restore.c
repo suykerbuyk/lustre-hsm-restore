@@ -159,6 +159,11 @@ void hsm_walk_dir(const char *name)
 	closedir(dir);
 }
 
+void test_functor(void* some_thing) {
+	char* msg=(char*) some_thing;
+	printf("MSG FROM FUNCTOR: %s\n", msg);
+	return;
+}
 int main(int argc, char** argv) {
 	int rc;
 	srand(time(NULL));
@@ -169,11 +174,8 @@ int main(int argc, char** argv) {
 		return -1;
 	}
 	rc = run_self_test();
+	run_as_thread(test_functor, "Hello, from message");
 	printf("run_self_test = %d\n", rc);
-	if (rc)
-		return rc;
-	if (!rc)
-		return rc;
 	zctx = zlog_get_category(zlog_category);
 	if (NULL == zctx) {
 		fprintf(stderr, "zlog failed to get category %s from %s\n",\

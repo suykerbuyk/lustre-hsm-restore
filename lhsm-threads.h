@@ -59,24 +59,7 @@ extern const struct timespec poll_time;
 /* Number of worker threads to spawn */
 extern int thread_count;
 
-//extern struct ctx_hsm_restore_thread *hsm_worker_threads;
 
-/* state of the running context */
-enum ctx_tstate {
-	ctx_dead   = -1, /*  Can only be set by worker thread */
-	ctx_idle   =  0, /*  Can only be set by worker thread */
-	ctx_work   =  1  /*  Can only be set by parent thread */
-};
-
-/* global shutdown flag */
-static int volatile shutdown_flag = 0;
-
-/* zlog category context.  We only use one for this */
-extern zlog_category_t* zctx;
-/* Category of logging definitions */
-extern const char* const zlog_category;
-/* The config file that controls logging  */
-extern const char* const zlog_conf_file;
 
 /* state context's file */
 enum ctx_fstate {
@@ -87,6 +70,13 @@ enum ctx_fstate {
 	ctx_open_fail = 4
 };
 
+/* state of the running context */
+enum ctx_tstate {
+	ctx_dead   = -1, /*  Can only be set by worker thread */
+	ctx_idle   =  0, /*  Can only be set by worker thread */
+	ctx_work   =  1  /*  Can only be set by parent thread */
+};
+
 /* The operational context of a worker thread */
 struct ctx_worker {
 	enum ctx_tstate tstate; /* running state of thread context, set by worker */
@@ -94,10 +84,19 @@ struct ctx_worker {
 	int  error;             /* errno of last failed call                      */
 	char path[PATH_MAX];    /* File path to restore                           */
 };
+
 struct ctx_hsm_restore_thread {
 	pthread_t         tcb;
 	struct ctx_worker ctx;
 };
+
+
+/* zlog category context.  We only use one for this */
+extern zlog_category_t* zctx;
+/* Category of logging definitions */
+extern const char* const zlog_category;
+/* The config file that controls logging  */
+extern const char* const zlog_conf_file;
 
 int restore_threads_init(int threads);
 void restore_threads_halt(void);
@@ -106,6 +105,9 @@ struct ctx_hsm_restore_thread* restore_threads_find_idle(void);
 /* function run by a worker thread */
 void* run_restore_ctx(void* context);
 
+typedef void(*file_functor_ptr)(void*);
+
+void run_as_thread(file_functor_ptr function, void* functor_ctx);
 
 #endif // LHSM_THREADS_H
 // vim: tabstop=4 shiftwidth=4 softtabstop=4 smarttab colorcolumn=81

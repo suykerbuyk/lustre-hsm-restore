@@ -39,14 +39,17 @@
 
 #include <dirent.h>
 #include <errno.h>
+#include <endian.h>
 #include <fcntl.h>
 #include <stdio.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
 
+#include "lhsm-restore-mfid.h"
 static const char* const filename_pattern = "%s/test_file_0x%04x.dat";
 static const char* const directory_pattern= "%s/dir_0x%02x-0x%04x";
 static const int sparse_file_size = 1024 * 1024;
@@ -68,14 +71,34 @@ static int get_or_make_dir(const char* const dirpath) {
 	}
 	return rc;
 }
+static int generate_testfile
+(const char* const filepath, off_t sparse_size) {
+	int fd;
+	int fmask;
+	int rc = 0;
+	errno = 0;
+	fmask = umask(0);
+	fd = open(filepath, O_RDWR | O_CREAT,
+			S_IRUSR | S_IWUSR |
+			S_IRGRP | S_IWGRP |
+			S_IROTH | S_IWOTH );
+	if (fd < 0) {
+		rc = errno;
+	} else {
+		close(fd);
+		if (truncate(filepath, sparse_size) < 0) {
+			rc = errno;
+		}
+	}
+	umask(fmask);
+	return rc;
+}
 
 static int generate_testdir
 (const char* const topdir, size_t max_depth,
  size_t subdirs_count, size_t file_count) {
 	int rc;
-	int fd;
 	int len;
-	int fmask;
 	char dirpath[PATH_MAX];
 	char next_path[PATH_MAX];
 	char* eop = dirpath;
@@ -89,8 +112,10 @@ static int generate_testdir
 	/* trim trailing slash */
 	if ((len > 1) && (*(eop-1) == '/'))
 		*(--eop) = 0;
+	/* recreate our test directory */
 	if ( 0 != (rc=get_or_make_dir(dirpath)))
 		return rc;
+	/* recursively create the test directories */
 	for(unsigned int subdir_num=0;
 			subdir_num < subdirs_count;
 			subdir_num++) {
@@ -102,27 +127,15 @@ static int generate_testdir
 		if (rc)
 			break;
 	}
-	fmask=umask(0);
+	/* create the sparse test files */
 	for (unsigned int filenum = 0;
-			(filenum < file_count);
-			filenum++) {
+			(filenum < file_count); filenum++) {
 		snprintf(next_path, sizeof(next_path),
 				filename_pattern, dirpath, filenum);
-		fd = open(next_path, O_RDWR | O_CREAT,
-				S_IRUSR | S_IWUSR |
-				S_IRGRP | S_IWGRP |
-				S_IROTH | S_IWOTH );
-		if (fd < 0) {
-			rc = errno;
+		rc = generate_testfile(next_path, sparse_file_size);
+		if (rc)
 			break;
-		}
-		close(fd);
-		if (truncate(next_path, sparse_file_size) < 0) {
-			rc = errno;
-			break;
-		}
 	}
-	umask(fmask);
 	return rc;
 }
 
