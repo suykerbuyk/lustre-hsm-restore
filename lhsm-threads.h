@@ -59,16 +59,13 @@ extern const struct timespec poll_time;
 /* Number of worker threads to spawn */
 extern int thread_count;
 
-
-
-/* state context's file */
-enum ctx_fstate {
-	ctx_unknown   = 0,
-	ctx_found     = 1,
-	ctx_lost      = 2,
-	ctx_recovered = 3,
-	ctx_open_fail = 4
+struct file_func_ctx {
+	char file_path[PATH_MAX];
+	int  failed;
 };
+
+/* generic function prototype for thread to run. */
+typedef void(*file_functor_ptr)(struct file_func_ctx*);
 
 /* state of the running context */
 enum ctx_tstate {
@@ -77,39 +74,30 @@ enum ctx_tstate {
 	ctx_work   =  1  /*  Can only be set by parent thread */
 };
 
-/* The operational context of a worker thread */
-struct ctx_worker {
-	enum ctx_tstate tstate; /* running state of thread context, set by worker */
-	enum ctx_fstate fstate; /* state of recovered file, set by worker         */
-	int  error;             /* errno of last failed call                      */
-	char path[PATH_MAX];    /* File path to restore                           */
-};
-
-struct ctx_hsm_restore_thread {
-	pthread_t         tcb;
-	struct ctx_worker ctx;
+struct ctx_worker_thread {
+	pthread_t             tcb;
+	enum ctx_tstate       tstate;
+	file_functor_ptr      pfunc;
+	struct file_func_ctx  fctx;
+	int                   thrdid;
 };
 
 
 /* zlog category context.  We only use one for this */
 extern zlog_category_t* zctx_log;
 extern zlog_category_t* zctx_dbg;
+
 /* Category of logging definitions */
 extern const char* const zlog_category_log;
 extern const char* const zlog_category_dbg;
+
 /* The config file that controls logging  */
 extern const char* const zlog_conf_file;
 
-int restore_threads_init(int threads);
-void restore_threads_halt(void);
-struct ctx_hsm_restore_thread* restore_threads_find_idle(void);
+int  threads_init(int threads, file_functor_ptr pfunc);
+void threads_halt(void);
+struct ctx_worker_thread* find_idle(void);
 
-/* function run by a worker thread */
-void* run_restore_ctx(void* context);
-
-typedef void(*file_functor_ptr)(void*);
-
-void run_as_thread(file_functor_ptr function, void* functor_ctx);
 
 #endif // LHSM_THREADS_H
 // vim: tabstop=4 shiftwidth=4 softtabstop=4 smarttab colorcolumn=81

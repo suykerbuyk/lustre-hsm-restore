@@ -56,20 +56,43 @@ const  char* const zlog_category_dbg = "lhsm_log_dbg";
 const  char* const zlog_conf_file = "lhsm-restore.conf";
 zlog_category_t* zctx_log = NULL;
 zlog_category_t* zctx_dbg = NULL;
+static pthread_mutex_t thrd_mtx =  PTHREAD_RECURSIVE_MUTEX_INITIALIZER_NP;
 
-struct file_func_ctx {
-	char file_path[PATH_MAX];
-	char result[PATH_MAX *2];
-	int failed;
+const char* const default_conf_content = \
+"[formats]\n" \
+"simple = \"%m%n\" \n" \
+"normal = \"%d(%F %T) %m%n\"";
 
-};
 
+int confirm_conf_file(void) {
+	int rc = 0;
+	int fd = 0;
+	int fmask;
+	if (access(zlog_conf_file, 0)) {
+		return 0;
+	} else {
+		fmask = umask(0);
+		fprintf(stderr, "Missing or unreadable conf file %s\n", zlog_conf_file);
+		fd = open(zlog_conf_file, O_RDWR | O_CREAT,
+				S_IRUSR | S_IWUSR |
+				S_IRGRP | S_IWGRP |
+				S_IROTH | S_IWOTH );
+		if (fd < 0) {
+			rc = errno;
+		} else {
+			rc = dprintf(fd, "%s", default_conf_content);
+			close(fd);
+		}
+		umask(fmask);
+	}
+	return rc;
+}
 int restore_file(const char* const file_path) {
 	int fd;
 	int rc;
 	char iobuf[4096];
 	fd = open(file_path, O_RDONLY);
-	if (fd == 0) {
+	if (fd <= 0) {
 		rc = errno;
 	} else {
 		rc = read(fd, &iobuf, sizeof(iobuf));
@@ -80,8 +103,8 @@ int restore_file(const char* const file_path) {
 			/* Positive value means successful bytes read */
 			rc = 0; 
 		}
-	}
-	close(fd);
+		close(fd	);
+		}
 	return rc;
 }
 
@@ -91,28 +114,24 @@ int validate_file(const char* const file_path) {
 	return rc;
 }
 
-struct file_func_ctx* file_functor(struct file_func_ctx* fctx) {
+void file_functor(struct file_func_ctx* fctx) {
 	int rc;
 	struct hsm_user_state hus;
-	memset(fctx->result, 0, sizeof(fctx->result));
-	while(1) {
-		rc = llapi_hsm_state_get(fctx->file_path, &hus);
-		if (rc != 0) {
-			snprintf(fctx->result, sizeof(fctx->result),
-					"ERROR: LLAPI Fail %d for %s", rc, fctx->file_path);
+	rc = llapi_hsm_state_get(fctx->file_path, &hus);
+	if (rc != 0) {
+		zlog_error(zctx_log,"ERROR: llapi fail errno %d for %s", rc, fctx->file_path);
+		fctx->failed = rc;
+	} else if (hus.hus_states & HS_RELEASED) {
+		if ((rc = restore_file(fctx->file_path)) != 0) {
+			zlog_warn(zctx_log, "LOST: restore fail errno %d for %s",
+				rc, fctx->file_path);
 			fctx->failed = 1;
-			break;
+		} else {
+			zlog_info(zctx_log,"RESTORED: %s", fctx->file_path);
 		}
-		if (hus.hus_states & HS_RELEASED) {
-			if ((rc = restore_file(fctx->file_path)) != 0) {
-				snprintf(fctx->result, sizeof(fctx->result),
-					"ERROR: Restore Fail %d for %s", rc, fctx->file_path);
-				fctx->failed = 1;
-				break;
-			}
-		}
+	} else {
+		zlog_info(zctx_log,"OK: %s", fctx->file_path);
 	}
-	return fctx;
 }
 
 void hsm_walk_dir(const char *name)
@@ -150,47 +169,48 @@ void hsm_walk_dir(const char *name)
 			}
 			released = hus.hus_states & HS_RELEASED;
 			if (released) {
+				pthread_mutex_lock( &thrd_mtx );
 				zlog_info(zctx_dbg, "hsmwalk found released: %s", path);
-				struct ctx_hsm_restore_thread* \
-					pthrd = restore_threads_find_idle();
-				if (NULL == pthrd) {
+				struct ctx_worker_thread* \
+					pwctx = find_idle();
+				if (NULL == pwctx) {
 					zlog_error(zctx_dbg, "ERROR: No idle threads found");
 				} else {
-					strncpy(pthrd->ctx.path, path, sizeof(pthrd->ctx.path));
-					pthrd->ctx.tstate = ctx_work;
+					struct file_func_ctx* pfctx = &pwctx->fctx;
+					strncpy(pfctx->file_path, path, sizeof(pfctx->file_path));
+					pwctx->tstate = ctx_work;
 				}
+				pthread_mutex_unlock( &thrd_mtx );
 			}
 		}
 	}
 	closedir(dir);
 }
 
-void test_functor(void* some_thing) {
-	char* msg=(char*) some_thing;
-	printf("MSG FROM FUNCTOR: %s\n", msg);
-	return;
-}
-
 int main(int argc, char** argv) {
 	int rc;
 	srand(time(NULL));
+	if ((rc = confirm_conf_file()) != 0) {
+		fprintf(stderr, "Failed to create %s\n", zlog_conf_file);
+		return 1;
+	}
 	rc = zlog_init(zlog_conf_file);
 	if (rc) {
 		fprintf(stderr, "zlog init failed with errno %d while opening %s\n",\
 				rc, zlog_conf_file);
-		return -1;
+		return 1;
 	}
 	zctx_dbg = zlog_get_category(zlog_category_dbg);
 	zctx_log = zlog_get_category(zlog_category_log);
-	rc = run_self_test();
-	run_as_thread(test_functor, "Hello, from message");
-	printf("run_self_test = %d\n", rc);
 	if (NULL == zctx_dbg) {
 		fprintf(stderr, "zlog failed to get category %s from %s\n",\
 				zlog_category_dbg, zlog_conf_file);
 	}
+	//rc = run_self_test();
+	//run_as_thread(test_functor, "Hello, from message");
+	//printf("run_self_test = %d\n", rc);
 	zlog_info(zctx_dbg, "BEGIN: main");
-	restore_threads_init(thread_count);
+	threads_init(thread_count, file_functor);
 	if (argc >1) {
 		char* path=argv[1];
 		size_t plen=strlen(path);
@@ -203,9 +223,9 @@ int main(int argc, char** argv) {
 	} else {
 	   hsm_walk_dir(".");
 	}
-	restore_threads_halt();
-	zlog_fini();
+	threads_halt();
 	zlog_info(zctx_dbg, "EXIT: main");
+	zlog_fini();
 	return 0;
 }
 // vim: tabstop=4 shiftwidth=4 softtabstop=4 smarttab colorcolumn=81

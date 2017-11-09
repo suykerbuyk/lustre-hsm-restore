@@ -49,90 +49,18 @@
 static int volatile shutdown_flag = 0;
 
 /* List of worker thread contextx */
-static struct ctx_hsm_restore_thread *hsm_worker_threads;
+static struct ctx_worker_thread *worker_threads;
 const  struct timespec poll_time = {0,100000000L};
 int    thread_count = 16;
 
-int restore_threads_init(int threads) {
-	int rc;
-	int idx = 0;
-	pthread_t* ptcb;
-	struct ctx_worker* pctx;
-	zlog_info(zctx_dbg, "BEGIN: restore_threads_init");
-	hsm_worker_threads =\
-		calloc(thread_count , sizeof(struct ctx_hsm_restore_thread));
-	if (NULL == hsm_worker_threads) {
-		zlog_error(zctx_dbg, "Could not allocate memory for thread contexts.");
-		return(ENOMEM);
-	}
-	while (idx < threads) {
-		ptcb=&(hsm_worker_threads[idx].tcb);
-		pctx=&(hsm_worker_threads[idx].ctx);
-		if ((rc = pthread_create(ptcb, NULL, run_restore_ctx, pctx )) != 0) {
-			zlog_error(zctx_dbg, "error %d launching thread %d", rc, idx);
-			return(rc);
-		}
-		zlog_info(zctx_dbg, "Launched thread %d", idx);
-		idx++;
-	}
-	zlog_info(zctx_dbg, "EXIT: restore_theads_init Launched %d threads", idx);
-	return(0);
-}
-
-void restore_threads_halt(void) {
-	int idx = 0;
-	zlog_info(zctx_dbg, "ENTER: restore_threads_halt");
-	/* tell the threads it's time to quit */
-	shutdown_flag = 1;
-	nanosleep(&poll_time, NULL);
-	/* send the cancel signal, will be caught by nanosleep */
-	while (idx < thread_count) {
-		pthread_cancel(hsm_worker_threads[idx].tcb);
-		nanosleep(&poll_time, NULL);
-		idx++;
-	}
-	idx = 0;
-	/* Join each thread as they shutdown */
-	while (idx < thread_count) {
-		zlog_info(zctx_dbg, "Joining thread %d", idx);
-		pthread_join(hsm_worker_threads[idx].tcb,NULL);
-		idx++;
-	}
-	zlog_info(zctx_dbg, "EXIT: restore_threads_halt");
-}
-struct ctx_hsm_restore_thread* restore_threads_find_idle(void) {
-	static int idx=0;
-	zlog_info(zctx_dbg,"ENTER: restore_threads_find_idle");
-	struct ctx_worker* pctx = &hsm_worker_threads[idx].ctx;
-	while(1) {
-		if (pctx->tstate == ctx_idle) {
-			zlog_info(zctx_dbg, "EXIT: returning idle thread %d", idx);
-			return (&hsm_worker_threads[idx]);
-		}
-		if (idx == (thread_count-1)) {
-			nanosleep(&poll_time, NULL);
-			zlog_debug(zctx_dbg, "No idle threads found.  Still searching.");
-		}
-		idx++;
-		if (idx >= thread_count)
-			idx=0;
-		pctx = &hsm_worker_threads[idx].ctx;
-	}
-	zlog_error(zctx_dbg, "EXIT: FAILED to find idle thread");
-	return(NULL);
-}
 /* Worker thread function to restore a file */
-void* run_restore_ctx(void* context) {
+static void* run_thread_ctx(void* param) {
 	int rc;
-	struct ctx_worker* pctx = (struct ctx_worker*) context;
-	char  iobuff[4096];
-	int   fd;
+	struct ctx_worker_thread* pctx = (struct ctx_worker_thread*) param;
 	pctx->tstate = ctx_idle;
-	struct md5result md5str;
 	pthread_setcancelstate(PTHREAD_CANCEL_ENABLE, NULL);
 	zlog_info(zctx_dbg, "ENTER: run_restore_ctx");
 	while (!shutdown_flag) {
-		pctx->fstate=ctx_unknown;
 		while(pctx->tstate == ctx_idle) {
 			rc = nanosleep(&poll_time, NULL);
 			if (rc != 0) {
@@ -141,38 +69,92 @@ void* run_restore_ctx(void* context) {
 				break;
 			}
 		}
-		zlog_info(zctx_dbg, "run_restore_ctx has path %s", pctx->path);
 		if (shutdown_flag) {
 			zlog_warn(zctx_dbg, "run_restore_ctx SHUTDOWN FLAG IS SET!");
 			break;
 		}
-		fd = open(pctx->path, O_RDONLY);
-		if (fd == 0) {
-			pctx->error = errno;
-			pctx->fstate = ctx_open_fail;
-		} else {
-			rc = read(fd, &iobuff, sizeof(iobuff));
-			if (rc < 0) {
-				pctx->error = errno;
-				pctx->fstate = ctx_lost;
-			} else {
-				//for(int i =0; i < 50000; i++) {
-					str2md5(iobuff, sizeof(iobuff), &md5str);
-				//}
-				pctx->fstate = ctx_recovered;
-			}
-		close(fd);
-		fprintf(stdout, "%s %s\n", md5str.str, pctx->path);
-		zlog_info(zctx_log, "%s %s", md5str.str, pctx->path);
-		}
+		zlog_info(zctx_dbg, "run_restore_ctx: calling functor");
+		pctx->pfunc(&pctx->fctx);
+		zlog_info(zctx_dbg, "run_thread_ctx functor returned.");
 		pctx->tstate = ctx_idle;
 	}
 	pctx->tstate = ctx_dead;
 	zlog_info(zctx_dbg, "EXIT: run_restore_ctx");
-	pthread_exit(context);
+	pthread_exit(pctx);
 	return(NULL);
 }
 
+
+int threads_init(int threads, file_functor_ptr pfunc) {
+	int rc;
+	int idx = 0;
+	struct ctx_worker_thread* pctx;
+	zlog_info(zctx_dbg, "BEGIN: threads_init");
+	worker_threads =\
+		calloc(thread_count , sizeof(struct ctx_worker_thread));
+	if (NULL == worker_threads) {
+		zlog_error(zctx_dbg, "Could not allocate memory for thread contexts.");
+		return(ENOMEM);
+	}
+	while (idx < threads) {
+		pctx = &worker_threads[idx];
+		pctx->pfunc = pfunc;
+		pctx->tstate = ctx_dead;
+		if ((rc = pthread_create(&pctx->tcb, NULL,\
+				run_thread_ctx,  &worker_threads[idx] )) != 0) {
+			zlog_error(zctx_dbg, "error %d launching thread %d", rc, idx);
+			return(rc);
+		}
+		zlog_info(zctx_dbg, "Launched thread %d", idx);
+		idx++;
+	}
+	zlog_info(zctx_dbg, "EXIT: threads_init Launched %d threads", idx);
+	return(0);
+}
+
+void threads_halt(void) {
+	int idx = 0;
+	zlog_info(zctx_dbg, "ENTER: threads_halt");
+	/* tell the threads it's time to quit */
+	shutdown_flag = 1;
+	nanosleep(&poll_time, NULL);
+	/* send the cancel signal, will be caught by nanosleep */
+	while (idx < thread_count) {
+		pthread_cancel(worker_threads[idx].tcb);
+		nanosleep(&poll_time, NULL);
+		idx++;
+	}
+	idx = 0;
+	/* Join each thread as they shutdown */
+	while (idx < thread_count) {
+		zlog_info(zctx_dbg, "Joining thread %d", idx);
+		pthread_join(worker_threads[idx].tcb,NULL);
+		idx++;
+	}
+	zlog_info(zctx_dbg, "EXIT: threads_halt");
+}
+struct ctx_worker_thread* find_idle(void) {
+	static int idx=0;
+	zlog_info(zctx_dbg,"ENTER: find_idle");
+	while(1) {
+		if (worker_threads[idx].tstate == ctx_idle) {
+			zlog_info(zctx_dbg, "EXIT: returning idle thread %d", idx);
+			return (&worker_threads[idx]);
+		}
+		if (idx == (thread_count-1)) {
+			if (nanosleep(&poll_time, NULL) < 0) {
+				zlog_warn(zctx_dbg, "signaled while looking for idle threads.");
+				break;
+			}
+			zlog_debug(zctx_dbg, "No idle threads found.  Still searching.");
+		}
+		idx++;
+		if (idx >= thread_count)
+			idx=0;
+	}
+	zlog_error(zctx_dbg, "EXIT: FAILED to find idle thread");
+	return(NULL);
+}
 void str2md5(const char *str, int length, struct md5result* pres) {
 	int n;
 	MD5_CTX c;
@@ -196,9 +178,5 @@ void str2md5(const char *str, int length, struct md5result* pres) {
 	for (n = 0; n < 16; ++n) {
 		snprintf(&(out[n*2]), 16*2, "%02x", (unsigned int)digest[n]);
 	}
-}
-
-void run_as_thread(file_functor_ptr function, void* functor_ctx) {
-	function(functor_ctx);
 }
 // vim: tabstop=4 shiftwidth=4 softtabstop=4 smarttab colorcolumn=81
