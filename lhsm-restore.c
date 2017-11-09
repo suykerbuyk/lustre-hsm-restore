@@ -61,14 +61,19 @@ static pthread_mutex_t thrd_mtx =  PTHREAD_RECURSIVE_MUTEX_INITIALIZER_NP;
 const char* const default_conf_content = \
 "[formats]\n" \
 "simple = \"%m%n\" \n" \
-"normal = \"%d(%F %T) %m%n\"";
+"normal = \"%d(%F %T) %m%n\"" \
+"\n" \
+"\n" \
+"[rules]\n"\
+"lhsm_log_dbg.DEBUG  \"lhsm-restore-dbg.log\", 10MB * 3, \"lhsm-restore-dbg.#r.log\"; normal\n" \
+"lhsm_log.* \"lhsm-restore.log\"; simple\n";
 
 
 int confirm_conf_file(void) {
 	int rc = 0;
 	int fd = 0;
 	int fmask;
-	if (access(zlog_conf_file, 0)) {
+	if (!access(zlog_conf_file, F_OK)) {
 		return 0;
 	} else {
 		fmask = umask(0);
@@ -80,7 +85,8 @@ int confirm_conf_file(void) {
 		if (fd < 0) {
 			rc = errno;
 		} else {
-			rc = dprintf(fd, "%s", default_conf_content);
+			rc = 0;
+			dprintf(fd, "%s", default_conf_content);
 			close(fd);
 		}
 		umask(fmask);
