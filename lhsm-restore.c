@@ -125,18 +125,18 @@ void file_functor(struct file_func_ctx* fctx) {
 	struct hsm_user_state hus;
 	rc = llapi_hsm_state_get(fctx->file_path, &hus);
 	if (rc != 0) {
-		zlog_error(zctx_log,"ERROR: llapi fail errno %d for %s", rc, fctx->file_path);
+		zlog_error(zctx_log,"ERROR:     llapi fail errno %d for %s", rc, fctx->file_path);
 		fctx->failed = rc;
 	} else if (hus.hus_states & HS_RELEASED) {
 		if ((rc = restore_file(fctx->file_path)) != 0) {
-			zlog_warn(zctx_log, "LOST: restore fail errno %d for %s",
+			zlog_warn(zctx_log, "LOST:      restore fail errno %d for %s",
 				rc, fctx->file_path);
 			fctx->failed = 1;
 		} else {
-			zlog_info(zctx_log,"RESTORED: %s", fctx->file_path);
+			zlog_info(zctx_log, "RESTORED: %s", fctx->file_path);
 		}
 	} else {
-		zlog_info(zctx_log,"OK: %s", fctx->file_path);
+		zlog_info(zctx_log, "OK:       %s", fctx->file_path);
 	}
 }
 
