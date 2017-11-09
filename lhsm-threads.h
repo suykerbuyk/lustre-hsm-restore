@@ -92,9 +92,11 @@ struct ctx_hsm_restore_thread {
 
 
 /* zlog category context.  We only use one for this */
-extern zlog_category_t* zctx;
+extern zlog_category_t* zctx_log;
+extern zlog_category_t* zctx_dbg;
 /* Category of logging definitions */
-extern const char* const zlog_category;
+extern const char* const zlog_category_log;
+extern const char* const zlog_category_dbg;
 /* The config file that controls logging  */
 extern const char* const zlog_conf_file;
 

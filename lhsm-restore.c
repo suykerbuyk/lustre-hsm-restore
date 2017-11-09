@@ -51,6 +51,12 @@
 
 #endif
 
+const  char* const zlog_category_log = "lhsm_log";
+const  char* const zlog_category_dbg = "lhsm_log_dbg";
+const  char* const zlog_conf_file = "lhsm-restore.conf";
+zlog_category_t* zctx_log = NULL;
+zlog_category_t* zctx_dbg = NULL;
+
 struct file_func_ctx {
 	char file_path[PATH_MAX];
 	char result[PATH_MAX *2];
@@ -117,7 +123,7 @@ void hsm_walk_dir(const char *name)
 	if (!(dir = opendir(name))) {
 		return;
 	} else {
-		zlog_info(zctx, "working on %s", name);
+		zlog_info(zctx_dbg, "working on %s", name);
 	}
 	while ((entry = readdir(dir)) != NULL) {
 		char path[PATH_MAX];
@@ -144,11 +150,11 @@ void hsm_walk_dir(const char *name)
 			}
 			released = hus.hus_states & HS_RELEASED;
 			if (released) {
-				zlog_info(zctx, "hsmwalk found released: %s", path);
+				zlog_info(zctx_dbg, "hsmwalk found released: %s", path);
 				struct ctx_hsm_restore_thread* \
 					pthrd = restore_threads_find_idle();
 				if (NULL == pthrd) {
-					zlog_error(zctx, "ERROR: No idle threads found");
+					zlog_error(zctx_dbg, "ERROR: No idle threads found");
 				} else {
 					strncpy(pthrd->ctx.path, path, sizeof(pthrd->ctx.path));
 					pthrd->ctx.tstate = ctx_work;
@@ -164,6 +170,7 @@ void test_functor(void* some_thing) {
 	printf("MSG FROM FUNCTOR: %s\n", msg);
 	return;
 }
+
 int main(int argc, char** argv) {
 	int rc;
 	srand(time(NULL));
@@ -173,15 +180,16 @@ int main(int argc, char** argv) {
 				rc, zlog_conf_file);
 		return -1;
 	}
+	zctx_dbg = zlog_get_category(zlog_category_dbg);
+	zctx_log = zlog_get_category(zlog_category_log);
 	rc = run_self_test();
 	run_as_thread(test_functor, "Hello, from message");
 	printf("run_self_test = %d\n", rc);
-	zctx = zlog_get_category(zlog_category);
-	if (NULL == zctx) {
+	if (NULL == zctx_dbg) {
 		fprintf(stderr, "zlog failed to get category %s from %s\n",\
-				zlog_category, zlog_conf_file);
+				zlog_category_dbg, zlog_conf_file);
 	}
-	zlog_info(zctx, "BEGIN: main");
+	zlog_info(zctx_dbg, "BEGIN: main");
 	restore_threads_init(thread_count);
 	if (argc >1) {
 		char* path=argv[1];
@@ -197,7 +205,7 @@ int main(int argc, char** argv) {
 	}
 	restore_threads_halt();
 	zlog_fini();
-	zlog_info(zctx, "EXIT: main");
+	zlog_info(zctx_dbg, "EXIT: main");
 	return 0;
 }
 // vim: tabstop=4 shiftwidth=4 softtabstop=4 smarttab colorcolumn=81

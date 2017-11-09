@@ -52,39 +52,36 @@ static int volatile shutdown_flag = 0;
 static struct ctx_hsm_restore_thread *hsm_worker_threads;
 const  struct timespec poll_time = {0,100000000L};
 int    thread_count = 16;
-const  char* const zlog_category = "lhsm_log";
-const  char* const zlog_conf_file = "lhsm-restore.conf";
-zlog_category_t* zctx = NULL;
 
 int restore_threads_init(int threads) {
 	int rc;
 	int idx = 0;
 	pthread_t* ptcb;
 	struct ctx_worker* pctx;
-	zlog_info(zctx, "BEGIN: restore_threads_init");
+	zlog_info(zctx_dbg, "BEGIN: restore_threads_init");
 	hsm_worker_threads =\
 		calloc(thread_count , sizeof(struct ctx_hsm_restore_thread));
 	if (NULL == hsm_worker_threads) {
-		zlog_error(zctx, "Could not allocate memory for thread contexts.");
+		zlog_error(zctx_dbg, "Could not allocate memory for thread contexts.");
 		return(ENOMEM);
 	}
 	while (idx < threads) {
 		ptcb=&(hsm_worker_threads[idx].tcb);
 		pctx=&(hsm_worker_threads[idx].ctx);
 		if ((rc = pthread_create(ptcb, NULL, run_restore_ctx, pctx )) != 0) {
-			zlog_error(zctx, "error %d launching thread %d", rc, idx);
+			zlog_error(zctx_dbg, "error %d launching thread %d", rc, idx);
 			return(rc);
 		}
-		zlog_info(zctx, "Launched thread %d", idx);
+		zlog_info(zctx_dbg, "Launched thread %d", idx);
 		idx++;
 	}
-	zlog_info(zctx, "EXIT: restore_theads_init Launched %d threads", idx);
+	zlog_info(zctx_dbg, "EXIT: restore_theads_init Launched %d threads", idx);
 	return(0);
 }
 
 void restore_threads_halt(void) {
 	int idx = 0;
-	zlog_info(zctx, "ENTER: restore_threads_halt");
+	zlog_info(zctx_dbg, "ENTER: restore_threads_halt");
 	/* tell the threads it's time to quit */
 	shutdown_flag = 1;
 	nanosleep(&poll_time, NULL);
@@ -97,31 +94,31 @@ void restore_threads_halt(void) {
 	idx = 0;
 	/* Join each thread as they shutdown */
 	while (idx < thread_count) {
-		zlog_info(zctx, "Joining thread %d", idx);
+		zlog_info(zctx_dbg, "Joining thread %d", idx);
 		pthread_join(hsm_worker_threads[idx].tcb,NULL);
 		idx++;
 	}
-	zlog_info(zctx, "EXIT: restore_threads_halt");
+	zlog_info(zctx_dbg, "EXIT: restore_threads_halt");
 }
 struct ctx_hsm_restore_thread* restore_threads_find_idle(void) {
 	static int idx=0;
-	zlog_info(zctx,"ENTER: restore_threads_find_idle");
+	zlog_info(zctx_dbg,"ENTER: restore_threads_find_idle");
 	struct ctx_worker* pctx = &hsm_worker_threads[idx].ctx;
 	while(1) {
 		if (pctx->tstate == ctx_idle) {
-			zlog_info(zctx, "EXIT: returning idle thread %d", idx);
+			zlog_info(zctx_dbg, "EXIT: returning idle thread %d", idx);
 			return (&hsm_worker_threads[idx]);
 		}
 		if (idx == (thread_count-1)) {
 			nanosleep(&poll_time, NULL);
-			zlog_debug(zctx, "No idle threads found.  Still searching.");
+			zlog_debug(zctx_dbg, "No idle threads found.  Still searching.");
 		}
 		idx++;
 		if (idx >= thread_count)
 			idx=0;
 		pctx = &hsm_worker_threads[idx].ctx;
 	}
-	zlog_error(zctx, "EXIT: FAILED to find idle thread");
+	zlog_error(zctx_dbg, "EXIT: FAILED to find idle thread");
 	return(NULL);
 }
 /* Worker thread function to restore a file */
@@ -133,20 +130,20 @@ void* run_restore_ctx(void* context) {
 	pctx->tstate = ctx_idle;
 	struct md5result md5str;
 	pthread_setcancelstate(PTHREAD_CANCEL_ENABLE, NULL);
-	zlog_info(zctx, "ENTER: run_restore_ctx");
+	zlog_info(zctx_dbg, "ENTER: run_restore_ctx");
 	while (!shutdown_flag) {
 		pctx->fstate=ctx_unknown;
 		while(pctx->tstate == ctx_idle) {
 			rc = nanosleep(&poll_time, NULL);
 			if (rc != 0) {
-				zlog_warn(zctx, "run_restore_ctx: Cancel signaled!");
+				zlog_warn(zctx_dbg, "run_restore_ctx: Cancel signaled!");
 				shutdown_flag = 1;
 				break;
 			}
 		}
-		zlog_info(zctx, "run_restore_ctx has path %s", pctx->path);
+		zlog_info(zctx_dbg, "run_restore_ctx has path %s", pctx->path);
 		if (shutdown_flag) {
-			zlog_warn(zctx, "run_restore_ctx SHUTDOWN FLAG IS SET!");
+			zlog_warn(zctx_dbg, "run_restore_ctx SHUTDOWN FLAG IS SET!");
 			break;
 		}
 		fd = open(pctx->path, O_RDONLY);
@@ -166,11 +163,12 @@ void* run_restore_ctx(void* context) {
 			}
 		close(fd);
 		fprintf(stdout, "%s %s\n", md5str.str, pctx->path);
+		zlog_info(zctx_log, "%s %s", md5str.str, pctx->path);
 		}
 		pctx->tstate = ctx_idle;
 	}
 	pctx->tstate = ctx_dead;
-	zlog_info(zctx, "EXIT: run_restore_ctx");
+	zlog_info(zctx_dbg, "EXIT: run_restore_ctx");
 	pthread_exit(context);
 	return(NULL);
 }
