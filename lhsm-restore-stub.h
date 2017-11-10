@@ -39,9 +39,9 @@
 #ifndef LHSM_RESTORE_STUB_H
 #define LHSM_RESTORE_STUB_H
 #include <stdlib.h>
-#include <openssl/md5.h>
 #include <sys/types.h>
 #include <linux/types.h>
+#include "md5.h"
 
 struct md5result {
 	char str[34];

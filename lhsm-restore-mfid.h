@@ -43,7 +43,6 @@ extern const char* const file_ea_name;
 
 struct m0_fid;
 struct ml_ct_fs_ea;
-
 size_t size_of_m0_fid(void);
 
 #endif // lhsm_restore_mfid_h

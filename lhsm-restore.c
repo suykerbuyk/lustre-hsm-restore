@@ -50,6 +50,7 @@
 #include "lhsm-restore-stub.h"
 
 #endif
+#include "lhsm-restore-mfid.h"
 
 const  char* const zlog_category_log = "lhsm_log";
 const  char* const zlog_category_dbg = "lhsm_log_dbg";
@@ -104,7 +105,7 @@ int restore_file(const char* const file_path) {
 		rc = read(fd, &iobuf, sizeof(iobuf));
 		if (rc < 0) {
 			/* convert to positive errno value */
-			rc = -errno;
+			rc = errno;
 		} else {
 			/* Positive value means successful bytes read */
 			rc = 0; 
@@ -125,7 +126,8 @@ void file_functor(struct file_func_ctx* fctx) {
 	struct hsm_user_state hus;
 	rc = llapi_hsm_state_get(fctx->file_path, &hus);
 	if (rc != 0) {
-		zlog_error(zctx_log,"ERROR:     llapi fail errno %d for %s", rc, fctx->file_path);
+		zlog_error(zctx_log,\
+				"ERROR:     llapi fail errno %d for %s", rc, fctx->file_path);
 		fctx->failed = rc;
 	} else if (hus.hus_states & HS_RELEASED) {
 		if ((rc = restore_file(fctx->file_path)) != 0) {
@@ -144,7 +146,6 @@ void hsm_walk_dir(const char *name)
 {
 	DIR *dir;
 	struct dirent *entry;
-	int rc;
 	if (!(dir = opendir(name))) {
 		return;
 	} else {
@@ -152,9 +153,6 @@ void hsm_walk_dir(const char *name)
 	}
 	while ((entry = readdir(dir)) != NULL) {
 		char path[PATH_MAX];
-		struct hsm_user_state hus;
-		int released;
-
 		if (*entry->d_name =='/') 
 			snprintf(path, sizeof(path), "%s%s", name, entry->d_name);
 		else
@@ -165,29 +163,16 @@ void hsm_walk_dir(const char *name)
 				continue;
 			hsm_walk_dir(path);
 		} else if (entry->d_type == DT_REG) {
-			rc = llapi_hsm_state_get(path, &hus);
-			if (rc != 0) {
-				printf("Error: get hsm state rc %d errno %d for %s\n",\
-						rc, errno, path);
-				break;
+			pthread_mutex_lock( &thrd_mtx );
+			struct ctx_worker_thread* pwctx = find_idle();
+			if (NULL == pwctx) {
+				zlog_error(zctx_dbg, "ERROR: No idle threads found");
 			} else {
-				//printf("Got hsm state for %s\n", path);
+				struct file_func_ctx* pfctx = &pwctx->fctx;
+				strncpy(pfctx->file_path, path, sizeof(pfctx->file_path));
+				pwctx->tstate = ctx_work;
 			}
-			released = hus.hus_states & HS_RELEASED;
-			if (released) {
-				pthread_mutex_lock( &thrd_mtx );
-				zlog_info(zctx_dbg, "hsmwalk found released: %s", path);
-				struct ctx_worker_thread* \
-					pwctx = find_idle();
-				if (NULL == pwctx) {
-					zlog_error(zctx_dbg, "ERROR: No idle threads found");
-				} else {
-					struct file_func_ctx* pfctx = &pwctx->fctx;
-					strncpy(pfctx->file_path, path, sizeof(pfctx->file_path));
-					pwctx->tstate = ctx_work;
-				}
-				pthread_mutex_unlock( &thrd_mtx );
-			}
+			pthread_mutex_unlock( &thrd_mtx );
 		}
 	}
 	closedir(dir);

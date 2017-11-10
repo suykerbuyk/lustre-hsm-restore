@@ -27,7 +27,8 @@ $(SUBDIRS):
 
 CFLAGS   = -std=c99 -Wall -g
 LDFLAGS +=-L$(LIB_SRCH_PATH)
-LIBS    := -lpthread -lcrypto $(DIR_ZLOG_SRC)/libzlog.a
+LIBS    := -lpthread $(DIR_ZLOG_SRC)/libzlog.a
+LIBS_LLAPI := -llustreapi
 
 .DEFAULT_GOAL := $(TARGET)
 

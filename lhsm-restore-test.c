@@ -49,7 +49,7 @@
 #include <sys/types.h>
 #include <unistd.h>
 
-#include "lhsm-restore-mfid.h"
+//#include "lhsm-restore-mfid.h"
 static const char* const filename_pattern = "%s/test_file_0x%04x.dat";
 static const char* const directory_pattern= "%s/dir_0x%02x-0x%04x";
 static const int sparse_file_size = 1024 * 1024;
